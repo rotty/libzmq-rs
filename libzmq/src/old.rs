@@ -9,7 +9,7 @@ use sys::errno;
 
 use libc::c_int;
 
-use std::os::raw::c_void;
+use std::{os::raw::c_void, time::Duration};
 
 fn send(
     mut_sock_ptr: *mut c_void,
@@ -108,6 +108,22 @@ impl OldSocket {
         self.inner.bind(&endpoint)
     }
 
+    pub(crate) fn connect<E>(&mut self, endpoint: E) -> Result<(), Error>
+    where
+        E: Into<Endpoint>,
+    {
+        let endpoint = endpoint.into();
+        self.inner.connect(&endpoint)
+    }
+
+    pub(crate) fn disconnect<E>(&mut self, endpoint: E) -> Result<(), Error>
+    where
+        E: Into<Endpoint>,
+    {
+        let endpoint = endpoint.into();
+        self.inner.disconnect(&endpoint)
+    }
+
     pub(crate) fn send<M>(&mut self, msg: M, more: bool) -> Result<(), Error>
     where
         M: Into<Msg>,
@@ -148,6 +164,25 @@ impl OldSocket {
             }
         }
         Ok(vec)
+    }
+
+    pub(crate) fn subscribe(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        self.inner.subscribe(bytes)
+    }
+
+    pub(crate) fn unsubscribe(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        self.inner.unsubscribe(bytes)
+    }
+
+    pub(crate) fn set_recv_timeout(
+        &mut self,
+        maybe: Option<Duration>,
+    ) -> Result<(), Error> {
+        self.inner.set_recv_timeout(maybe)
+    }
+
+    pub(crate) fn recv_timeout(&self) -> Result<Option<Duration>, Error> {
+        self.inner.recv_timeout()
     }
 }
 
