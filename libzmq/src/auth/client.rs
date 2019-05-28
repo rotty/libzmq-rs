@@ -1,4 +1,4 @@
-use super::{server::COMMAND_ENDPOINT, *};
+use super::{server::AUTH_SERVER_ADDR, *};
 use crate::{addr::IntoIpAddrs, prelude::*, socket::*, *};
 
 use serde::{Deserialize, Serialize};
@@ -102,7 +102,7 @@ impl AuthClient {
         C: Into<Ctx>,
     {
         let client = ClientBuilder::new()
-            .connect(&*COMMAND_ENDPOINT)
+            .connect(&*AUTH_SERVER_ADDR)
             .with_ctx(ctx)
             .map_err(Error::cast)?;
 
@@ -576,21 +576,25 @@ mod test {
     #[test]
     fn test_plain_denied() {
         let addr: TcpAddr = "127.0.0.1:*".try_into().unwrap();
+        let duration = Duration::from_millis(200);
 
         let server = ServerBuilder::new()
             .bind(&addr)
             .mechanism(Mechanism::PlainServer)
-            .recv_timeout(Duration::from_millis(200))
+            .recv_timeout(duration)
             .build()
             .unwrap();
 
         let bound = server.last_endpoint().unwrap().unwrap();
 
-        let client = Client::new().unwrap();
-
         let creds = PlainClientCreds::new("user", "pwd");
-        client.set_mechanism(Mechanism::PlainClient(creds)).unwrap();
-        client.connect(bound).unwrap();
+
+        let client = ClientBuilder::new()
+            .mechanism(creds)
+            .connect(bound)
+            .send_timeout(duration)
+            .build()
+            .unwrap();
 
         client.send("").unwrap();
         assert!(server.recv_msg().is_err());

@@ -1,6 +1,11 @@
 //! The ØMQ context type.
 
-use crate::{auth::server::AuthServer, error::msg_from_errno};
+use crate::{
+    auth::server::{AuthServer, AUTH_SERVER_ADDR},
+    error::msg_from_errno,
+    prelude::*,
+    ClientBuilder,
+};
 use libzmq_sys as sys;
 use sys::errno;
 
@@ -12,6 +17,7 @@ use std::{
     ptr, str,
     sync::Arc,
     thread,
+    time::Duration,
 };
 
 lazy_static! {
@@ -338,6 +344,24 @@ impl Ctx {
         // since it holds a `Arc` to it. No need to store & join the
         // thread handle.
         thread::spawn(move || auth.run());
+
+        let duration = Duration::from_millis(10);
+        let client = ClientBuilder::new()
+            .connect(&*AUTH_SERVER_ADDR)
+            .send_timeout(duration)
+            .recv_timeout(duration)
+            .with_ctx(&ctx)
+            .unwrap();
+
+        // Block until the `AuthServer` is ready.
+        loop {
+            let _ = client.send("");
+            let result = client.recv_msg();
+            if let Ok(msg) = result {
+                assert!(msg.is_empty());
+                break;
+            }
+        }
 
         ctx
     }

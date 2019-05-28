@@ -17,10 +17,9 @@ use std::{
 
 const ZAP_VERSION: &str = "1.0";
 lazy_static! {
-    static ref ZAP_ENDPOINT: InprocAddr = "zeromq.zap.01".try_into().unwrap();
-    pub(crate) static ref COMMAND_ENDPOINT: InprocAddr =
+    static ref ZAP_ADDR: InprocAddr = "zeromq.zap.01".try_into().unwrap();
+    pub(crate) static ref AUTH_SERVER_ADDR: InprocAddr =
         InprocAddr::new_unique();
-    static ref AUTH_EVENT_ENDPOINT: InprocAddr = InprocAddr::new_unique();
 }
 
 /// The possible status code resulting from a `ZAP` handshake.
@@ -151,7 +150,7 @@ struct AuthResult {
 pub(crate) struct AuthServer {
     //  ZAP handler socket
     handler: OldSocket,
-    request: Server,
+    server: Server,
     whitelist: HashSet<Ipv6Addr>,
     blacklist: HashSet<Ipv6Addr>,
     plain_registry: HashMap<String, String>,
@@ -168,14 +167,14 @@ impl AuthServer {
     {
         let ctx = ctx.into();
         let mut handler = OldSocket::with_ctx(OldSocketType::Router, &ctx)?;
-        handler.bind(&*ZAP_ENDPOINT)?;
+        handler.bind(&*ZAP_ADDR)?;
 
-        let request = Server::with_ctx(ctx)?;
-        request.bind(&*COMMAND_ENDPOINT).map_err(Error::cast)?;
+        let server = Server::with_ctx(ctx)?;
+        server.bind(&*AUTH_SERVER_ADDR).map_err(Error::cast)?;
 
         Ok(AuthServer {
             handler,
-            request,
+            server,
             whitelist: HashSet::default(),
             blacklist: HashSet::default(),
             plain_registry: HashMap::default(),
@@ -187,7 +186,7 @@ impl AuthServer {
     pub(crate) fn run(&mut self) -> Result<(), Error> {
         let mut poller = Poller::new();
         poller.add(&self.handler, PollId(0), READABLE)?;
-        poller.add(&self.request, PollId(1), READABLE)?;
+        poller.add(&self.server, PollId(1), READABLE)?;
 
         let mut events = Events::new();
 
@@ -211,17 +210,26 @@ impl AuthServer {
                             self.handler.send_multipart(reply)?;
                         }
                         PollId(1) => {
-                            let msg = self.request.recv_msg()?;
-                            let id = msg.routing_id().unwrap();
-                            let request: AuthRequest =
-                                bincode::deserialize(msg.as_bytes()).unwrap();
+                            let msg = self.server.recv_msg()?;
 
-                            let reply = self.on_request(request);
-                            let ser = bincode::serialize(&reply).unwrap();
+                            if msg.is_empty() {
+                                // This is a client ping used to tell when the
+                                // `AuthServer` is ready.
+                                self.server.send(msg).map_err(Error::cast)?;
+                            } else {
+                                let id = msg.routing_id().unwrap();
 
-                            let mut msg: Msg = ser.into();
-                            msg.set_routing_id(id);
-                            self.request.send(msg).map_err(Error::cast)?;
+                                let request: AuthRequest =
+                                    bincode::deserialize(msg.as_bytes())
+                                        .unwrap();
+
+                                let reply = self.on_request(request);
+                                let ser = bincode::serialize(&reply).unwrap();
+
+                                let mut msg: Msg = ser.into();
+                                msg.set_routing_id(id);
+                                self.server.send(msg).map_err(Error::cast)?;
+                            }
                         }
                         _ => unreachable!(),
                     }
